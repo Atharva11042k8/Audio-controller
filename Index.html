@@ -1,0 +1,165 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture Volume Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #video-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #video, #canvas {
+            transform: scaleX(-1);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #volume-display {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 24px;
+            font-family: Arial, sans-serif;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <video id="video"></video>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div id="volume-display">Volume: 0%</div>
+
+    <!-- Add your audio URL here -->
+    <audio id="background-audio" loop>
+        <source src="aaa.mp3" type="audio/mpeg">
+    </audio>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.min.js"></script>
+
+    <script>
+        let model, video, canvas, ctx;
+        const audioElement = document.getElementById('background-audio');
+        let volumeHistory = [];
+        const maxVolumeDistance = 150; // Adjust based on arm length
+
+        async function initialize() {
+            try {
+                [model, video] = await Promise.all([
+                    handpose.load(),
+                    setupCamera()
+                ]);
+                
+                canvas = document.getElementById('canvas');
+                ctx = canvas.getContext('2d');
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+                
+                // Start audio after user interaction
+                document.body.addEventListener('click', () => {
+                    audioElement.play().catch(() => {});
+                });
+                
+                detectHands();
+            } catch (error) {
+                console.error('Initialization error:', error);
+            }
+        }
+
+        async function setupCamera() {
+            const video = document.getElementById('video');
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: 640, height: 480 }
+            });
+            video.srcObject = stream;
+            await new Promise(resolve => video.onloadedmetadata = resolve);
+            video.play();
+            return video;
+        }
+
+        function resizeCanvas() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+        }
+
+        async function detectHands() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const hands = await model.estimateHands(video);
+            if (hands.length > 0) {
+                const landmarks = hands[0].landmarks;
+                updateVolume(calculateVolume(landmarks));
+                drawLandmarks(landmarks);
+            }
+            
+            requestAnimationFrame(detectHands);
+        }
+
+        function calculateVolume(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            
+            const distance = Math.hypot(
+                thumbTip[0] - indexTip[0],
+                thumbTip[1] - indexTip[1]
+            );
+            
+            let volume = Math.min(distance / maxVolumeDistance, 1);
+            volume = Math.max(volume, 0);
+            
+            volumeHistory.push(volume);
+            if (volumeHistory.length > 5) volumeHistory.shift();
+            return volumeHistory.reduce((a, b) => a + b) / volumeHistory.length;
+        }
+
+        function updateVolume(volume) {
+            audioElement.volume = volume;
+            document.getElementById('volume-display').textContent = 
+                `Volume: ${Math.round(volume * 100)}%`;
+        }
+
+        function drawLandmarks(landmarks) {
+            ctx.fillStyle = '#00ff00';
+            landmarks.forEach(point => {
+                ctx.beginPath();
+                ctx.arc(point[0], point[1], 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        window.addEventListener('beforeunload', () => {
+            video.srcObject.getTracks().forEach(track => track.stop());
+        });
+
+        initialize();
+    </script>
+</body>
+</html>
